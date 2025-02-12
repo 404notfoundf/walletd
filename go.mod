@@ -6,9 +6,11 @@ toolchain go1.23.2
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.24
+	go.etcd.io/bbolt v1.3.11
 	go.sia.tech/core v0.10.0
 	go.sia.tech/coreutils v0.11.0
 	go.sia.tech/jape v0.12.1
+	go.sia.tech/siad v1.5.9
 	go.sia.tech/web/walletd v0.27.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/term v0.28.0
@@ -19,6 +21,8 @@ require (
 )
 
 require (
+	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
+	github.com/dchest/threefish v0.0.0-20120919164726-3ecf4c494abf // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/google/pprof v0.0.0-20230821062121-407c9e7a662f // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
@@ -26,9 +30,12 @@ require (
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.49.0 // indirect
 	github.com/quic-go/webtransport-go v0.8.1-0.20241018022711-4ac2c9250e66 // indirect
-	go.etcd.io/bbolt v1.3.11 // indirect
+	gitlab.com/NebulousLabs/encoding v0.0.0-20200604091946-456c3dc907fe // indirect
+	gitlab.com/NebulousLabs/errors v0.0.0-20200929122200-06c536cf6975 // indirect
+	gitlab.com/NebulousLabs/fastrand v0.0.0-20181126182046-603482d69e40 // indirect
+	gitlab.com/NebulousLabs/merkletree v0.0.0-20200118113624-07fbf710afc4 // indirect
 	go.sia.tech/mux v1.3.0 // indirect
-	go.sia.tech/web v0.0.0-20240422221546-c1709d16b6ef // indirect
+	go.sia.tech/web v0.0.0-20240610131903-5611d44a533e // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.32.0 // indirect

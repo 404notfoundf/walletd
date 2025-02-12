@@ -573,6 +573,7 @@ func syncStore(ctx context.Context, store Store, cm ChainManager, index types.Ch
 			return ctx.Err()
 		default:
 		}
+
 		crus, caus, err := cm.UpdatesSince(index, batchSize)
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to chain manager: %w", err)

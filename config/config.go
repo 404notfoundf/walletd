@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"go.sia.tech/walletd/pool"
 	"os"
 
 	"go.sia.tech/walletd/wallet"
@@ -62,15 +63,15 @@ type (
 
 	// Config contains the configuration for the host.
 	Config struct {
-		Name          string `yaml:"name,omitempty"`
-		Directory     string `yaml:"directory,omitempty"`
-		AutoOpenWebUI bool   `yaml:"autoOpenWebUI,omitempty"`
-
-		HTTP      HTTP      `yaml:"http,omitempty"`
-		Consensus Consensus `yaml:"consensus,omitempty"`
-		Syncer    Syncer    `yaml:"syncer,omitempty"`
-		Log       Log       `yaml:"log,omitempty"`
-		Index     Index     `yaml:"index,omitempty"`
+		Name          string          `yaml:"name,omitempty"`
+		Directory     string          `yaml:"directory,omitempty"`
+		AutoOpenWebUI bool            `yaml:"autoOpenWebUI,omitempty"`
+		HTTP          HTTP            `yaml:"http,omitempty"`
+		Consensus     Consensus       `yaml:"consensus,omitempty"`
+		Syncer        Syncer          `yaml:"syncer,omitempty"`
+		Log           Log             `yaml:"log,omitempty"`
+		Index         Index           `yaml:"index,omitempty"`
+		Pool          pool.PoolConfig `yaml:"pool,omitempty"`
 	}
 )
 
