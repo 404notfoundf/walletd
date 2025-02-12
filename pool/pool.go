@@ -112,8 +112,8 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 
 			state := cm.TipState()
 			if p.persist.GetBlockHeight() != state.Index.Height {
-				p.log.Info("chain manager ", zap.Uint64("height", cm.Tip().Height))
-				p.log.Info("persist ", zap.Uint64("height", p.persist.GetBlockHeight()))
+				// p.log.Info("chain manager ", zap.Uint64("height", cm.Tip().Height))
+				// p.log.Info("persist ", zap.Uint64("height", p.persist.GetBlockHeight()))
 
 				block, _ := cm.Block(state.Index.ID)
 
