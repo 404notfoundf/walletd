@@ -6,7 +6,6 @@ toolchain go1.23.2
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.24
-	go.etcd.io/bbolt v1.3.11
 	go.sia.tech/core v0.10.0
 	go.sia.tech/coreutils v0.11.0
 	go.sia.tech/jape v0.12.1
@@ -34,6 +33,7 @@ require (
 	gitlab.com/NebulousLabs/errors v0.0.0-20200929122200-06c536cf6975 // indirect
 	gitlab.com/NebulousLabs/fastrand v0.0.0-20181126182046-603482d69e40 // indirect
 	gitlab.com/NebulousLabs/merkletree v0.0.0-20200118113624-07fbf710afc4 // indirect
+	go.etcd.io/bbolt v1.3.11 // indirect
 	go.sia.tech/mux v1.3.0 // indirect
 	go.sia.tech/web v0.0.0-20240610131903-5611d44a533e // indirect
 	go.uber.org/mock v0.5.0 // indirect
