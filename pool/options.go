@@ -12,15 +12,6 @@ func WithLogger(log *zap.Logger) Option {
 	}
 }
 
-// WithSyncBatchSize sets the number of blocks to batch when scanning
-// the blockchain. The default is 64. Increasing this value can
-// improve performance at the cost of memory usage.
-func WithSyncBatchSize(size int) Option {
-	return func(p *Pool) {
-		p.setting.syncBatchSize = size
-	}
-}
-
 // WithPoolConfig sets pool config
 func WithPoolConfig(config PoolConfig) Option {
 	return func(p *Pool) {

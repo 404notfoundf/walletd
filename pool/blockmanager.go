@@ -7,26 +7,28 @@ import (
 	"time"
 )
 
-func (p *Pool) buildForBlock(isForce bool) types.Block {
-	if !isForce && time.Now().Before(p.sourceBlock.Timestamp.Add(10*time.Second)) {
+func (p *Pool) buildBlockForWork(isForce bool) types.Block {
+	if !isForce && time.Now().After(p.sourceBlock.Timestamp.Add(10*time.Second)) {
 		return p.sourceBlock
 	}
 
-	// 重新构建 sourceBlock
+	// 重新构建 block
 	var block types.Block
 
 	block.Timestamp = types.CurrentTimestamp()
+
+	tipState := p.cm.TipState()
 
 	block.Transactions = p.cm.PoolTransactions()
 
 	v2Transactions := p.cm.V2PoolTransactions()
 
-	payoutVal := CalculateSubsidy(p.cm.TipState(), block.Transactions, v2Transactions)
+	payoutVal := CalculateSubsidy(tipState, block.Transactions, v2Transactions)
 
 	block.MinerPayouts = []types.SiacoinOutput{{Address: p.setting.wallet, Value: payoutVal}}
 
 	if len(v2Transactions) > 0 {
-		block.V2 = ConstructV2BlockData(p.cm.Tip().Height, block.Transactions, v2Transactions, p.cm.TipState(), p.setting.wallet)
+		block.V2 = ConstructV2BlockData(tipState, block.Transactions, v2Transactions, p.setting.wallet)
 	}
 
 	return block

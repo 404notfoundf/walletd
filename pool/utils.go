@@ -8,7 +8,9 @@ import (
 	"go.sia.tech/core/types"
 	"go.sia.tech/siad/crypto"
 	"io"
+	"math"
 	"math/big"
+	"sort"
 	"time"
 	"unsafe"
 )
@@ -74,25 +76,24 @@ func WriteUint64(w io.Writer, u uint64) error {
 
 func CalculateSubsidy(cs consensus.State, transactions []types.Transaction, v2Transactions []types.V2Transaction) types.Currency {
 	subsidy := cs.BlockReward()
-	// 对于v1 transactions
+	// v1 transactions
 	for _, txn := range transactions {
 		subsidy = subsidy.Add(txn.TotalFees())
 	}
 
-	// 对于v2 transaction
+	// v2 transaction
 	for _, txn := range v2Transactions {
 		subsidy = subsidy.Add(txn.MinerFee)
 	}
 	return subsidy
 }
 
-func ConstructV2BlockData(height uint64, transactions []types.Transaction, v2Transactions []types.V2Transaction, cs consensus.State, minerAddress types.Address) *types.V2BlockData {
+func ConstructV2BlockData(cs consensus.State, transactions []types.Transaction, v2Transactions []types.V2Transaction, minerAddress types.Address) *types.V2BlockData {
 	blockData := &types.V2BlockData{
-		Height:       height,
+		Height:       cs.Index.Height,
 		Transactions: v2Transactions,
 	}
 	blockData.Commitment = cs.Commitment(cs.TransactionsCommitment(transactions, v2Transactions), minerAddress)
-
 	return blockData
 }
 
@@ -107,6 +108,7 @@ func MustParseAddress(s string) types.Address {
 
 func MarshalSiaArbDataNoSignatures(t types.Transaction, w io.Writer) {
 	encoder := types.NewEncoder(w)
+	t.EncodeTo(encoder)
 	encoder.WriteUint64(uint64(len(t.SiacoinInputs)))
 	encoder.WriteUint64(uint64(len(t.SiacoinOutputs)))
 	encoder.WriteUint64(uint64(len(t.FileContracts)))
@@ -123,11 +125,12 @@ func MarshalSiaArbDataNoSignatures(t types.Transaction, w io.Writer) {
 	encoder.Flush()
 }
 
-func IsSynced(tipState consensus.State) bool {
-	if tipState.Index.Height == 0 {
+func IsSynced(state consensus.State) bool {
+	if state.Index.Height == 0 {
 		return false
 	}
-	return lastBlockLessThanTwoHourAgo(tipState.PrevTimestamps)
+
+	return time.Now().After(MedianTimestamp(state))
 }
 
 func lastBlockLessThanTwoHourAgo(preTimestamp [11]time.Time) bool {
@@ -136,6 +139,20 @@ func lastBlockLessThanTwoHourAgo(preTimestamp [11]time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func MedianTimestamp(state consensus.State) time.Time {
+	prevCopy := state.PrevTimestamps
+
+	num := int(math.Min(float64(state.Index.Height+1), float64(len(state.PrevTimestamps))))
+
+	ts := prevCopy[:num]
+	sort.Slice(ts, func(i, j int) bool { return ts[i].Before(ts[j]) })
+	if len(ts)%2 != 0 {
+		return ts[len(ts)/2]
+	}
+	l, r := ts[len(ts)/2-1], ts[len(ts)/2]
+	return l.Add(r.Sub(l) / 2)
 }
 
 // ReadMerkleBranches returns the merkle branches of a block, as used in stratum

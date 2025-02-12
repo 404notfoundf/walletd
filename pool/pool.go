@@ -21,24 +21,9 @@ import (
 	"time"
 )
 
-const (
-	DxPoolName = "dxpool"
-)
-
 type Pool struct {
-	// blockMem map[types.BlockHeader]*types.Block // Mappings from headers to the blocks they are derived from.
-	// blockTxns       *txnList                           // list of transactions that are supposed to be solved in the next block
-	// headerMem       []types.BlockHeader // A circular list of headers that have been given out from the api recently.
 	sourceBlock     types.Block // The block from which new headers for mining are created.
 	sourceBlockTime time.Time   // How long headers have been using the same block (different from 'recent block').
-	// memProgress     int                 // The index of the most recent header used in headerMem.
-
-	// Transaction pool variables.
-	// fullSets        map[modules.TransactionSetID][]int
-	// blockMapHeap    *mapHeap
-	// overflowMapHeap *mapHeap
-	// setCounter int
-	// splitSets       map[splitSetID]*splitSet
 
 	// log
 	log *zap.Logger
@@ -52,10 +37,9 @@ type Pool struct {
 	// threadGroup
 	tg *threadgroup.ThreadGroup
 
-	mu sync.Mutex // protects the fields below
+	mu sync.Mutex // protects the fields
 
 	s Syncer
-	// persistDir string
 
 	setting PoolInternalSettings
 
@@ -72,7 +56,7 @@ type (
 		PoolTransactions() []types.Transaction
 		V2PoolTransactions() []types.V2Transaction
 		AddBlocks([]types.Block) error
-
+		Block(id types.BlockID) (types.Block, bool)
 		OnReorg(fn func(types.ChainIndex)) (cancel func())
 		UpdatesSince(index types.ChainIndex, max int) (rus []chain.RevertUpdate, aus []chain.ApplyUpdate, err error)
 	}
@@ -88,80 +72,6 @@ type (
 		BroadcastV2BlockOutline(bo gateway.V2BlockOutline)
 	}
 )
-
-func (p *Pool) syncStore(ctx context.Context, store Store, cm ChainManager, index types.ChainIndex, batchSize int) error {
-	p.log.Info("current chain manager", zap.Any("chain tip", cm.Tip()))
-	p.log.Info("current store ", zap.Any("store tip", index))
-
-	p.log.Info("pool transaction ", zap.Any("len ", len(cm.PoolTransactions())))
-	p.log.Info("pool v2 transaction ", zap.Any("len ", len(cm.V2PoolTransactions())))
-	for index != cm.Tip() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		crus, caus, err := cm.UpdatesSince(index, batchSize)
-		log.Printf("height %v: %v applied blocks, %v reverted blocks", index.Height, len(caus), len(crus))
-
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to chain manager: %w", err)
-		} else if err := store.UpdateChainState(crus, caus); err != nil {
-			return fmt.Errorf("failed to update chain state: %w", err)
-		}
-
-		switch {
-		case len(caus) > 0:
-
-			index = caus[len(caus)-1].State.Index
-			p.persist.SetTarget(caus[len(caus)-1].State.ChildTarget)
-
-			p.sourceBlock.ParentID = caus[len(caus)-1].Block.ParentID
-			p.sourceBlock.Timestamp = time.Now()
-
-			p.sourceBlock = p.buildForBlock(true)
-
-		case len(crus) > 0:
-			index = crus[len(crus)-1].State.Index
-
-		}
-	}
-	return nil
-}
-
-func (p *Pool) startServer() {
-	p.log.Info("--- waiting for sync ---")
-	ctx, cancel, err := p.tg.AddWithContext(context.Background())
-	if err != nil {
-		log.Panic("failed to add to thread group", zap.Error(err))
-	}
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	for {
-		if IsSynced(p.cm.TipState()) {
-			parentID := p.cm.Tip().ID
-			p.mu.Lock()
-			p.sourceBlock.ParentID = parentID
-			p.sourceBlock = p.buildForBlock(true)
-			p.mu.Unlock()
-
-			p.persist.SetTarget(p.cm.TipState().ChildTarget)
-			p.log.Info("	Starting stratum Server")
-
-			go p.startHttp(p.setting.port)
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-}
 
 func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, error) {
 	p := &Pool{
@@ -212,7 +122,6 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 			if err != nil {
 				log.Panic("failed to get last committed index", zap.Error(err))
 			}
-
 			err = p.syncStore(ctx, store, cm, lastTip, p.setting.syncBatchSize)
 			if err != nil {
 				switch {
@@ -238,6 +147,80 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 	}()
 
 	return p, nil
+}
+
+func (p *Pool) startServer() {
+	p.log.Info("--- waiting for synchronization ---")
+	ctx, cancel, err := p.tg.AddWithContext(context.Background())
+	if err != nil {
+		log.Panic("failed to add to thread group", zap.Error(err))
+	}
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	for {
+		// first start need build a block
+		if IsSynced(p.cm.TipState()) {
+			parentID := p.cm.Tip().ID
+			p.mu.Lock()
+			p.sourceBlock.ParentID = parentID
+			p.sourceBlock = p.buildBlockForWork(true)
+			p.mu.Unlock()
+
+			p.persist.SetTarget(p.cm.TipState().ChildTarget)
+			p.persist.SetBlockHeight(p.cm.TipState().Index.Height)
+			p.log.Info("	Starting stratum Server")
+
+			go p.startHttp(p.setting.port)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (p *Pool) syncStore(ctx context.Context, store Store, cm ChainManager, index types.ChainIndex, batchSize int) error {
+	p.log.Info("current chain manager", zap.Any("tip", cm.Tip().Height))
+	p.log.Info("current store ", zap.Any("tip", index))
+
+	for index != cm.Tip() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		crus, caus, err := cm.UpdatesSince(index, batchSize)
+		log.Printf("height %v: %v applied blocks, %v reverted blocks", index.Height, len(caus), len(crus))
+
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to chain manager: %w", err)
+		} else if err := store.UpdateChainState(crus, caus); err != nil {
+			return fmt.Errorf("failed to update chain state: %w", err)
+		}
+
+		switch {
+		case len(caus) > 0:
+
+			index = caus[len(caus)-1].State.Index
+			p.persist.SetTarget(caus[len(caus)-1].State.ChildTarget)
+
+			p.sourceBlock.ParentID = caus[len(caus)-1].Block.ParentID
+			p.sourceBlock.Timestamp = time.Now()
+
+			p.sourceBlock = p.buildBlockForWork(true)
+
+		case len(crus) > 0:
+
+			index = crus[len(crus)-1].State.Index
+
+		}
+	}
+	return nil
 }
 
 func (p *Pool) Close() error {
@@ -280,11 +263,12 @@ func (p *Pool) startHttp(port string) {
 	http.HandleFunc("/submit", func(writer http.ResponseWriter, request *http.Request) {
 		handleBlockSubmit(writer, request, p)
 	})
+
 	http.ListenAndServe(port, nil)
 }
 
 func getBlockTemplate(w http.ResponseWriter, r *http.Request, p *Pool) {
-	p.sourceBlock = p.buildForBlock(false)
+	p.sourceBlock = p.buildBlockForWork(false)
 
 	cs := p.cm.TipState()
 	p.sourceBlock.ParentID = cs.Index.ID
