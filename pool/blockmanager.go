@@ -8,11 +8,11 @@ import (
 )
 
 func (p *Pool) buildBlockForWork(isForce bool) types.Block {
-	if !isForce && time.Now().After(p.sourceBlock.Timestamp.Add(10*time.Second)) {
+	if !isForce && time.Now().Before(p.sourceBlock.Timestamp.Add(10*time.Second)) {
 		return p.sourceBlock
 	}
 
-	// 重新构建 block
+	// build block
 	var block types.Block
 
 	block.Timestamp = types.CurrentTimestamp()

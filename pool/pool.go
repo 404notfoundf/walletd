@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"go.sia.tech/core/consensus"
 	"go.sia.tech/core/gateway"
@@ -14,9 +13,7 @@ import (
 	"go.sia.tech/coreutils/chain"
 	"go.sia.tech/walletd/internal/threadgroup"
 	"go.uber.org/zap"
-	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -86,8 +83,6 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 		opt(p)
 	}
 
-	go p.startServer()
-
 	// start a goroutine to sync the store with the chain manager
 	reorgChan := make(chan struct{}, 1)
 	reorgChan <- struct{}{}
@@ -101,7 +96,7 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 	go func() {
 		defer unsubscribe()
 
-		log := p.log.Named("pool sync")
+		log := p.log.Named("pool height update")
 		ctx, cancel, err := p.tg.AddWithContext(context.Background())
 		if err != nil {
 			log.Panic("failed to add to thread group", zap.Error(err))
@@ -115,112 +110,24 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 			case <-reorgChan:
 			}
 
-			p.mu.Lock()
+			state := cm.TipState()
+			if p.persist.GetBlockHeight() != state.Index.Height {
+				p.log.Info("chain manager ", zap.Uint64("height", cm.Tip().Height))
+				p.log.Info("persist ", zap.Uint64("height", p.persist.GetBlockHeight()))
 
-			// get store
-			lastTip, err := store.LastCommittedIndex()
-			if err != nil {
-				log.Panic("failed to get last committed index", zap.Error(err))
+				block, _ := cm.Block(state.Index.ID)
+
+				p.persist.SetTarget(state.ChildTarget)
+				p.persist.SetBlockHeight(state.Index.Height)
+				p.sourceBlock.ParentID = block.ParentID
+				p.sourceBlock.Timestamp = time.Now()
+				p.sourceBlock = p.buildBlockForWork(true)
 			}
-			err = p.syncStore(ctx, store, cm, lastTip, p.setting.syncBatchSize)
-			if err != nil {
-				switch {
-				case errors.Is(err, context.Canceled):
-					p.mu.Unlock()
-					return
-				case strings.Contains(err.Error(), "missing block at index"): // unfortunate, but not exposed by coreutils
-					log.Warn("missing block at index, resetting chain state", zap.Stringer("id", lastTip.ID), zap.Uint64("height", lastTip.Height))
-					if err := store.ResetChainState(); err != nil {
-						log.Panic("failed to reset wallet state", zap.Error(err))
-					}
-					// trigger resync
-					select {
-					case reorgChan <- struct{}{}:
-					default:
-					}
-				default:
-					log.Panic("failed to sync store", zap.Error(err))
-				}
-			}
-			p.mu.Unlock()
 		}
 	}()
 
+	go p.startHttp(p.setting.port)
 	return p, nil
-}
-
-func (p *Pool) startServer() {
-	p.log.Info("--- waiting for synchronization ---")
-	ctx, cancel, err := p.tg.AddWithContext(context.Background())
-	if err != nil {
-		log.Panic("failed to add to thread group", zap.Error(err))
-	}
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	for {
-		// first start need build a block
-		if IsSynced(p.cm.TipState()) {
-			parentID := p.cm.Tip().ID
-			p.mu.Lock()
-			p.sourceBlock.ParentID = parentID
-			p.sourceBlock = p.buildBlockForWork(true)
-			p.mu.Unlock()
-
-			p.persist.SetTarget(p.cm.TipState().ChildTarget)
-			p.persist.SetBlockHeight(p.cm.TipState().Index.Height)
-			p.log.Info("	Starting stratum Server")
-
-			go p.startHttp(p.setting.port)
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func (p *Pool) syncStore(ctx context.Context, store Store, cm ChainManager, index types.ChainIndex, batchSize int) error {
-	p.log.Info("current chain manager", zap.Any("tip", cm.Tip().Height))
-	p.log.Info("current store ", zap.Any("tip", index))
-
-	for index != cm.Tip() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		crus, caus, err := cm.UpdatesSince(index, batchSize)
-		log.Printf("height %v: %v applied blocks, %v reverted blocks", index.Height, len(caus), len(crus))
-
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to chain manager: %w", err)
-		} else if err := store.UpdateChainState(crus, caus); err != nil {
-			return fmt.Errorf("failed to update chain state: %w", err)
-		}
-
-		switch {
-		case len(caus) > 0:
-
-			index = caus[len(caus)-1].State.Index
-			p.persist.SetTarget(caus[len(caus)-1].State.ChildTarget)
-
-			p.sourceBlock.ParentID = caus[len(caus)-1].Block.ParentID
-			p.sourceBlock.Timestamp = time.Now()
-
-			p.sourceBlock = p.buildBlockForWork(true)
-
-		case len(crus) > 0:
-
-			index = crus[len(crus)-1].State.Index
-
-		}
-	}
-	return nil
 }
 
 func (p *Pool) Close() error {
