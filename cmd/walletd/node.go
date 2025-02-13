@@ -193,7 +193,6 @@ func runNode(ctx context.Context, cfg config.Config, log *zap.Logger, enableDebu
 	}
 
 	s := syncer.New(syncerListener, cm, ps, header, syncer.WithLogger(log.Named("syncer")))
-	// s := syncer.New(syncerListener, cm, ps, header, syncer.WithLogger(log.Named("syncer")), syncer.WithMaxSendBlocks(5))
 	defer s.Close()
 	go s.Run()
 
@@ -228,19 +227,12 @@ func runNode(ctx context.Context, cfg config.Config, log *zap.Logger, enableDebu
 	go server.Serve(httpListener)
 	log.Info("node started", zap.String("network", network.Name), zap.Stringer("syncer", syncerListener.Addr()), zap.Stringer("http", httpListener.Addr()), zap.String("version", build.Version()), zap.String("commit", build.Commit()))
 
-	// todo add pool module
-	poolStore, err := sqlite.OpenDatabase(filepath.Join(cfg.Directory, "pool.sqlite3"), log.Named("sqlite3"))
-	if err != nil {
-		return fmt.Errorf("failed to open wallet database: %w", err)
-	}
-	defer poolStore.Close()
-
-	p, err := pool.NewPool(cm, poolStore, s, pool.WithLogger(log.Named("pool")), pool.WithPoolConfig(cfg.Pool))
+	// pool module
+	p, err := pool.NewPool(cm, s, pool.WithLogger(log.Named("pool")), pool.WithPoolConfig(cfg.Pool))
 	if err != nil {
 		return fmt.Errorf("failed to create pool: %w", err)
 	}
 	defer p.Close()
-	log.Info("pool started")
 
 	<-ctx.Done()
 	log.Info("shutting down")

@@ -2,6 +2,7 @@ package pool
 
 import (
 	"crypto"
+	"errors"
 	"go.sia.tech/core/types"
 )
 
@@ -14,22 +15,24 @@ const (
 
 var (
 	PrefixNonSia = types.NewSpecifier("NonSia")
+
+	ErrNilChainManager = errors.New("pool cannot use a nil chain manager")
+
+	ErrNilSyncer = errors.New("pool cannot use a nil syncer")
 )
 
 type (
 	PoolConfig struct {
-		Name      string `yaml:"name"`
-		Wallet    string `yaml:"wallet"`
-		Port      string `yaml:"port"`
-		BatchSize int    `yaml:"batchSize"`
+		Name   string `yaml:"name"`
+		Wallet string `yaml:"wallet"`
+		Port   string `yaml:"port"`
 		// PoolLogDir string
 	}
 
 	PoolInternalSettings struct {
-		name          string
-		wallet        types.Address
-		port          string
-		syncBatchSize int
+		name   string
+		wallet types.Address
+		port   string
 	}
 
 	ConsensusNotify struct {

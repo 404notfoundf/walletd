@@ -2,8 +2,10 @@ package pool
 
 import (
 	"fmt"
+	"go.sia.tech/core/consensus"
 	"go.sia.tech/core/gateway"
 	"go.sia.tech/core/types"
+	"go.uber.org/zap"
 	"time"
 )
 
@@ -12,26 +14,44 @@ func (p *Pool) buildBlockForWork(isForce bool) types.Block {
 		return p.sourceBlock
 	}
 
-	// build block
-	var block types.Block
+	state := p.cm.TipState()
+	transactions := p.cm.PoolTransactions()
 
-	block.Timestamp = types.CurrentTimestamp()
-
-	tipState := p.cm.TipState()
-
-	block.Transactions = p.cm.PoolTransactions()
-
-	v2Transactions := p.cm.V2PoolTransactions()
-
-	payoutVal := CalculateSubsidy(tipState, block.Transactions, v2Transactions)
-
-	block.MinerPayouts = []types.SiacoinOutput{{Address: p.setting.wallet, Value: payoutVal}}
-
-	if len(v2Transactions) > 0 {
-		block.V2 = ConstructV2BlockData(tipState, block.Transactions, v2Transactions, p.setting.wallet)
+	block := types.Block{
+		Timestamp:    types.CurrentTimestamp(),
+		Transactions: transactions,
 	}
 
+	payoutVal := p.calculateBlockPayout(state, &block)
+
+	block.MinerPayouts = []types.SiacoinOutput{{
+		Address: p.setting.wallet,
+		Value:   payoutVal,
+	}}
+
 	return block
+}
+
+func (p *Pool) processHeightChange() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	state := p.cm.TipState()
+	if p.persist.GetBlockHeight() != state.Index.Height {
+		p.log.Info("height update", zap.Uint64("chain manager height", state.Index.Height), zap.Uint64("persist height", p.persist.GetBlockHeight()))
+
+		p.persist.SetBlockHeight(state.Index.Height)
+		p.persist.SetTarget(state.ChildTarget)
+
+		block, _ := p.cm.Block(state.Index.ID)
+
+		p.sourceBlock.ParentID = block.ParentID
+		p.sourceBlock.Timestamp = MedianTimestamp(state)
+
+		if IsSynced(state) {
+			p.sourceBlock = p.buildBlockForWork(true)
+		}
+	}
 }
 
 func (p *Pool) manageSubmitBlock(b types.Block) error {
@@ -50,4 +70,19 @@ func (p *Pool) manageSubmitBlock(b types.Block) error {
 	}
 
 	return nil
+}
+
+func (p *Pool) calculateBlockPayout(state consensus.State, block *types.Block) types.Currency {
+	if !isAllowV2Transaction(state) {
+		return CalculateSubsidy(state, block.Transactions, nil)
+	}
+
+	v2Transactions := p.cm.V2PoolTransactions()
+	payoutVal := CalculateSubsidy(state, block.Transactions, v2Transactions)
+
+	if len(v2Transactions) > 0 {
+		block.V2 = ConstructV2BlockData(state, block.Transactions, v2Transactions, p.setting.wallet)
+	}
+
+	return payoutVal
 }

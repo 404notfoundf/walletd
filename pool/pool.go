@@ -70,13 +70,20 @@ type (
 	}
 )
 
-func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, error) {
+func NewPool(cm ChainManager, s Syncer, opts ...Option) (*Pool, error) {
+	if cm == nil {
+		return nil, ErrNilChainManager
+	}
+
+	if s == nil {
+		return nil, ErrNilSyncer
+	}
+
 	p := &Pool{
-		cm:    cm,
-		store: store,
-		s:     s,
-		log:   zap.NewNop(),
-		tg:    threadgroup.New(),
+		cm:  cm,
+		s:   s,
+		log: zap.NewNop(),
+		tg:  threadgroup.New(),
 	}
 
 	for _, opt := range opts {
@@ -96,10 +103,9 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 	go func() {
 		defer unsubscribe()
 
-		log := p.log.Named("pool height update")
 		ctx, cancel, err := p.tg.AddWithContext(context.Background())
 		if err != nil {
-			log.Panic("failed to add to thread group", zap.Error(err))
+			p.log.Panic("failed to add to thread group", zap.Error(err))
 		}
 		defer cancel()
 
@@ -110,24 +116,47 @@ func NewPool(cm ChainManager, store Store, s Syncer, opts ...Option) (*Pool, err
 			case <-reorgChan:
 			}
 
-			state := cm.TipState()
-			if p.persist.GetBlockHeight() != state.Index.Height {
-				// p.log.Info("chain manager ", zap.Uint64("height", cm.Tip().Height))
-				// p.log.Info("persist ", zap.Uint64("height", p.persist.GetBlockHeight()))
-
-				block, _ := cm.Block(state.Index.ID)
-
-				p.persist.SetTarget(state.ChildTarget)
-				p.persist.SetBlockHeight(state.Index.Height)
-				p.sourceBlock.ParentID = block.ParentID
-				p.sourceBlock.Timestamp = time.Now()
-				p.sourceBlock = p.buildBlockForWork(true)
-			}
+			p.processHeightChange()
 		}
 	}()
 
-	go p.startHttp(p.setting.port)
+	go p.StartServer()
+
 	return p, nil
+}
+
+func (p *Pool) StartServer() {
+	p.log.Info("      Waiting for consensus synchronization... \n")
+	ctx, cancel, err := p.tg.AddWithContext(context.Background())
+	if err != nil {
+		p.log.Panic("failed to add to thread group", zap.Error(err))
+	}
+
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	for {
+		// first sync
+		state := p.cm.TipState()
+		if IsSynced(state) {
+			finalBlock, _ := p.cm.Block(state.Index.ID)
+
+			p.mu.Lock()
+			p.sourceBlock = p.buildBlockForWork(true)
+			p.sourceBlock.ParentID = finalBlock.ID()
+			p.sourceBlock.Timestamp = MedianTimestamp(state)
+			p.mu.Unlock()
+
+			go p.startHttp(p.setting.port)
+			return
+		}
+
+		time.Sleep(time.Second)
+	}
 }
 
 func (p *Pool) Close() error {
@@ -152,7 +181,7 @@ func (p *Pool) coinB1() types.Transaction {
 func (p *Pool) coinB1Txn() string {
 	coinbaseTxn := p.coinB1()
 	buf := new(bytes.Buffer)
-	MarshalSiaArbDataNoSignatures(coinbaseTxn, buf)
+	MarshalArbDataNoSignatures(coinbaseTxn, buf)
 	b := buf.Bytes()
 	binary.LittleEndian.PutUint64(b[72:87], binary.LittleEndian.Uint64(b[72:87])+8)
 	return hex.EncodeToString(b)
@@ -177,8 +206,11 @@ func (p *Pool) startHttp(port string) {
 func getBlockTemplate(w http.ResponseWriter, r *http.Request, p *Pool) {
 	p.sourceBlock = p.buildBlockForWork(false)
 
-	cs := p.cm.TipState()
-	p.sourceBlock.ParentID = cs.Index.ID
+	chainIndex := p.cm.Tip()
+
+	block, _ := p.cm.Block(chainIndex.ID)
+
+	p.sourceBlock.ParentID = block.ID()
 
 	nbits := fmt.Sprintf("%08x", BigToCompact(BlockIdToBigInt(p.persist.Target)))
 
@@ -188,7 +220,7 @@ func getBlockTemplate(w http.ResponseWriter, r *http.Request, p *Pool) {
 
 	WriteJSON(w, ConsensusNotify{
 		Target:    p.persist.Target,
-		Height:    cs.Index.Height + 1,
+		Height:    chainIndex.Height + 1,
 		Block:     p.sourceBlock,
 		Coinbase1: p.coinB1Txn(),
 		Coinbase2: p.coinB2(),

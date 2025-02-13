@@ -106,7 +106,7 @@ func MustParseAddress(s string) types.Address {
 	return addr
 }
 
-func MarshalSiaArbDataNoSignatures(t types.Transaction, w io.Writer) {
+func MarshalArbDataNoSignatures(t types.Transaction, w io.Writer) {
 	encoder := types.NewEncoder(w)
 	t.EncodeTo(encoder)
 	encoder.WriteUint64(uint64(len(t.SiacoinInputs)))
@@ -130,7 +130,7 @@ func IsSynced(state consensus.State) bool {
 		return false
 	}
 
-	return time.Now().After(MedianTimestamp(state))
+	return lastBlockLessThanTwoHourAgo(state.PrevTimestamps)
 }
 
 func lastBlockLessThanTwoHourAgo(preTimestamp [11]time.Time) bool {
@@ -175,6 +175,7 @@ func ReadMerkleBranches(block types.Block) []string {
 		buf.Reset()
 	}
 
+	// todo 能否直接加
 	for _, txn := range block.V2Transactions() {
 		txn.EncodeTo(encoder)
 		encoder.Flush()
@@ -214,4 +215,11 @@ func ReadMerkleBranches(block types.Block) []string {
 		merkle = append(merkle, hex.EncodeToString(tr.stack[i].sum[:]))
 	}
 	return merkle
+}
+
+func isAllowV2Transaction(state consensus.State) bool {
+	if state.Index.Height < state.Network.HardforkV2.AllowHeight {
+		return false
+	}
+	return true
 }

@@ -18,6 +18,5 @@ func WithPoolConfig(config PoolConfig) Option {
 		p.setting.wallet = MustParseAddress(config.Wallet)
 		p.setting.port = config.Port
 		p.setting.name = config.Name
-		p.setting.syncBatchSize = config.BatchSize
 	}
 }
